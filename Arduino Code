@@ -1,0 +1,194 @@
+/***************************************************************
+ PROJECT: IoT based solar tracker system / the embedded software
+ Aboubakr El Hammoumi/ aboubakr.elhammoumi@usmba.ac.ma
+***************************************************************/
+
+#define CAYENNE_PRINT Serial // Comment this out to disable prints and save space
+#include <CayenneMQTTEthernet.h>    //CayenneMQTT library 
+#include <Servo.h>                  //Servo motor library 
+#include <DHT.h>                    //DHT library 
+#define DHTTYPE DHT22 // for what??
+#define DHTPIN 2
+DHT dht(DHTPIN,DHTTYPE);
+
+//MQTT credentials   
+char username[]=”498d2d00-afe2-11ea-883c-638d8ce4c23d”;
+char password[]=”ab4a8f92d94033c01f6e18ce1d8a84d8c304c9c4”;
+char clientID[]=”17798a40-b968-11ea-93bf-d33a96695544”;
+
+Servo servo_x;                   //up-down servomotor  
+int servoh = 0;
+int servohLimitHigh = 170;     
+int servohLimitLow = 10;       
+
+Servo servo_z;                   //left-right servomotor 
+int servov = 0; 
+int servovLimitHigh = 170;
+int servovLimitLow = 10;
+
+int topl,topr,botl,botr;
+int threshold_value=10;     
+// The servomotor will stop when the difference result is between -10 and 10. This range is used to stabilize the controller and to reduce the power consumption of servomotors. Otherwise, if the right set of LDRs receive more light, the PV panel will move in that direction (Counterclockwise) through the L-R servomotor and will continue to rotate until the difference result is in the range [−10, 10]. The same approach is used for the horizontal axis-based solar tracker movement where the average values of the two LDRs on the top and the two LDRs on the bottom are compared.   
+float vout;
+
+void setup()
+{ Serial.begin(9600);//baud rate: rate that Arduino can send out via USB cable
+  Cayenne.begin(username, password, clientID);//establish the connection with Cayenne dashboard
+  servo_x.attach(5);// https://www.arduino.cc/reference/en/libraries/servo/attach/
+  servo_z.attach(6);//pin number
+  dht.begin();// The DHT22/AM2302 sensor is able to measure temperatures from -40 to + 125 °c with an accuracy of +/-0.5 °c and relative humidity levels from 0 to 100% with an accuracy of +/-2% ( +/-5% at extremes, to 10% and 90% ). A measurement can be performed every 500 milliseconds ( twice per second ).
+
+  pinMode(3,OUTPUT);//set digital pin3 as a Output 
+//https://www.tutorialspoint.com/arduino/arduino_io_functions.htm#:~:text=The%20pinMode()%20function%20is,disables%20the%20internal%20pull%2Dups.
+  digitalWrite(3,LOW); //set digital pin 3 to off //https://www.arduino.cc/reference/en/language/functions/digital-io/digitalwrite/
+}
+// The LDR sensors are connected to the Arduino through analog pins fromA0 to A3? Not A2-A5?
+void loop()
+{ topr= analogRead(A2);       
+  topl= analogRead(A3);         
+  botl= analogRead(A4);         
+  botr= analogRead(A5); //A0-A15 analog pins for mega, read input pins 
+//https://www.arduino.cc/reference/en/language/functions/analog-io/analogread/
+  Vout=(analogRead(A1) * 5.0) / 1023; // The LDR is a resistor whose value decreases with increasing light intensity incident on its surface. Electrons are not able to be excited up to conduction band at night with low light intensity thus resistance is high and since the current is constant, the voltage will also be high. The LDR sensor is designed as a voltage divider circuit as can be seen in Fig. 2. The divider output voltage is converted by the microcontroller of the Arduino Mega from the analog value into a digital value between 0 and 1023. Because the Analog to Digital Converter(ADC) of the microcontroller is coded in 10 bits. 5V will be the output voltage that normally we see
+  Serial.println(“ Manual-mode”);
+  Cayenne.loop();//execute all cayenne functions only repeatedly
+  
+  if (digitalRead(3)==HIGH){//check LED state (mode)
+    Serial.println(“ Automatic-mode”);
+    servoh = servo_x.read();// Read the current angle of the servo (the value passed to the last call to write()-> should be 0 since it is initialized in 0).
+    servov = servo_z.read();
+    int avgtop = (topr + topl) / 2;     
+    int avgbot = (botr + botl) / 2;   
+    int avgright = (topr + botr) / 2;   
+    int avgleft = (topl + botl) / 2;    
+    int diffhori= avgtop – avgbot;      
+    int diffverti= avgleft – avgright;    
+    
+    /*tracking according to horizontal axis*/ 
+    if (abs(diffhori) <= threshold_value)
+    {
+     servo_x.write(servoh); //stop the servo up-down (servo.write(): set the servo angle to servoh, then moving the shaft to that orientation, range:0-180, https://www.arduino.cc/reference/en/libraries/servo/write/)
+
+    }
+else {
+       if (diffhori > threshold_value)//check diffhori > 0 or < 0
+          { Serial.println(“ x – 2 “);
+          servo_x.write(servoh -2);    //Clockwise rotate 2o CW??? Why only need to rotate 2 degrees? 
+          if (servoh > servohLimitHigh)
+          {
+           servoh = servohLimitHigh;
+          }
+          Delay(10);//wait 10ms for the servo reach to the position
+          }
+else {
+           servo_x.write(servoh +2);   //CCW
+           if (servoh < servohLimitLow)
+           {
+           servoh = servohLimitLow;
+           }
+           Delay(10);
+           }
+      }      
+    /*tracking according to vertical axis*/ 
+    if (abs(diffverti) <= threshold_value)
+    {     
+     servo_z.write(servov);       //stop the servo left-right
+    }
+else{
+       if (diffverti > threshold_value)
+       { 
+       servo_z.write(servov -2);  //CW
+       if (servov > servovLimitHigh) 
+       { 
+       servov = servovLimitHigh;
+       }
+       Delay(10);
+       }
+else{ 
+        servo_z.write(servov +2);  //CCW
+        if (servov < servovLimitLow) 
+        {
+        servov = servovLimitLow;
+        }
+        Delay(10);
+        }
+     }
+  }
+}
+// Cayenne Functions: (int: 0-31) It allows them to be linked with the corresponding sensor(OUT: output values only) or actuator(IN: Need input values).
+CAYENNE_IN(8){//Mode Indicator (Manual/Auto) This function will be called every time a Cayenne Dashboard widget writes a value to Virtual Channel 8
+  int value = getValue.asInt();(1/0?)
+  CAYENNE_LOG(“Channel %d, pin %d, value %d”, 8, 3, value);
+  digitalWrite(3,value);//Turn ON/OFF LED (Mode indicator), LED in the system circuit reflects the state of this switch
+}
+CAYENNE_IN(7){ //up-down servo motor
+  if (digitalRead(3)==HIGH){ //Automatic_mode
+  }
+  else{ //Manual_mode
+  servo_x.write(getValue.asDouble() * 180); // Slider preset the range from 0 to 1
+  }
+}
+CAYENNE_IN(6){ //left-right servo motor
+  if (digitalRead(3)==HIGH){
+  }  
+  else{
+  servo_z.write(getValue.asDouble() * 180);
+  }
+}
+
+CAYENNE_OUT(0) { //Current
+  float current = Vout/10;
+  Cayenne.virtualWrite(0, current);
+  Serial.print(“Current: “);
+  Serial.println(current);
+}
+CAYENNE_OUT(1) { //Voltage
+  float voltage = Vout * 2;
+  Cayenne.virtualWrite(1, voltage);
+  Serial.print(“Voltage: “);
+  Serial.println(voltage);
+}
+CAYENNE_OUT(2){ //LDR Top-right
+  Cayenne.virtualWrite(2, topr);
+}
+CAYENNE_OUT(3){ //LDR Top-left
+  Cayenne.virtualWrite(3,topl);
+}
+CAYENNE_OUT(4){ //LDR Bot-left
+  Cayenne.virtualWrite(4,botl);
+}
+CAYENNE_OUT(5){ //LDR Bot-right
+  Cayenne.virtualWrite(5,botr);
+}
+CAYENNE_OUT(10) { //Power
+  float power = (Vout * 2 * Vout)/10 ; //How this formula comes from? P = V**2/R?
+  Cayenne.virtualWrite(10, power);
+  Serial.print(“Power: “);
+  Serial.println(power);
+}
+CAYENNE_OUT(11){ //Temperature
+  float t = dht.readTemperature(); // Read temperature as Celsius (the default)
+  //int chk = dht.read(DHT11PIN);
+//dht.read():
+//Reads all kinds of DHT sensors, including DHT11, 21, 22, 33, 44 humidity temperature combo sensor. Returns correct readout except for DHT12 and negative temperatures by DHT11. Use dht.read12() and dht.read11() instead. It is to use model specific read function anyway.
+//Syntax: dht.read(pin)
+//Parameters: pin: pin number of DHT sensor (can't be 0), type is number
+//Returns: 
+//status as defined in Constants
+//temp temperature (see note below)
+//humi humidity (see note below)
+//temp_dec temperature decimal
+//humi_dec humidity decimal
+//https://nodemcu.readthedocs.io/en/dev/modules/dht/
+  Cayenne.virtualWrite(11, t, TYPE_TEMPERATURE, UNIT_CELSIUS);
+  Serial.print(“temperature: “);
+  Serial.println(t);
+}
+CAYENNE_OUT(12){ //Humidity
+  float h = dht.readHumidity();//Reading temperature or humidity takes about 250 milliseconds!
+  //Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  //int chk = dht.read(DHT11PIN);
+  Cayenne.virtualWrite(12, h);
+  Serial.print(“  humidity: “);
+  Serial.println(h);
+}
